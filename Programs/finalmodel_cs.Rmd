@@ -1,0 +1,426 @@
+---
+title: "US Migration Data"
+output:
+  pdf_document:
+    fig_width: 7
+    fig_height: 3
+    fig_caption: true
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+library(fanetc)
+library(rstan)
+library(truncnorm)
+library(bayesplot)
+library(tidybayes)
+library(distortr)
+load('./data_setup2.RData')
+
+reg_d <- lapply(reg_d, function(dd){
+  dd %>% 
+  filter(age<=75) %>% 
+  mutate(age_gp = cut(age, breaks = seq(0,75,5))) %>% 
+  group_by(age_gp) %>% 
+  mutate(age = median(age)) %>% 
+  group_by(newpuma, year, age_gp,age) %>% 
+  summarise(migrant = sum(migrant), 
+            totalpop = sum(totalpop)) %>% 
+  mutate(rate = migrant/totalpop) %>% 
+  ungroup()
+})
+
+reg_d$`6`$statefip = 6
+reg_d$`36`$statefip = 36
+reg_d$`48`$statefip = 48
+
+reg_d$`6`$state = 'California'
+reg_d$`36`$state = 'New York'
+reg_d$`48`$state = 'Texas'
+
+aa <- paste0(reg_d$`36` %>% group_by(age) %>% slice(1)%$% age_gp, collapse=", ")
+
+# reg_d$`36`
+# reg_d$`36` <- reg_d$`36` %>% 
+#   left_join(obs_counties, by = c("newpuma","statefip"))
+
+ reg_d$`36` %>% mutate(dd = totalpop-migrant) %>% arrange(-rate) 
+ 
+ set.seed(36)
+ # sim_pop <- 500
+ sim_pop <- 1000
+  reg_d$`36` <- reg_d$`36` %>% 
+   rowwise() %>% 
+   mutate(sim_dat = rpois(1, rate*sim_pop)) %>% 
+   ungroup() %>% 
+   mutate(sim_pop = sim_pop,
+          sim_rate = sim_dat/sim_pop)
+```
+
+# Couple of descriptive plots
+
+```{r, echo = FALSE, warning=FALSE}
+reg_d$`36` %>% 
+  ggplot(aes(year, rate, group = age_gp, col = age_gp))+ 
+  geom_line(show.legend = FALSE)+ 
+  facet_wrap(~newpuma, scales = "free")+ 
+  theme_bw()
+```
+
+```{r, echo = FALSE, warning=FALSE}
+reg_d$`36` %>% 
+  group_by(newpuma, age_gp) %>% 
+  mutate(rate = rate - mean(rate)) %>% 
+  ggplot(aes(year, rate, group = newpuma, col = newpuma))+ 
+  geom_line(show.legend = FALSE)+ 
+  facet_wrap(~age_gp)+ 
+  theme_bw()
+```
+
+```{r, echo = TRUE, warning=FALSE}
+
+lm1 <- glm(migrant ~ age_gp + factor(newpuma) + offset(log(totalpop)), data = reg_d$`36`, family = poisson(link="log"))
+fitted_links = log(predict(lm1, type="response")/reg_d$`36`$totalpop)
+rate_resid = reg_d$`36`$rate - predict(lm1, type="response")/reg_d$`36`$totalpop
+
+reg_d$`36` %>% 
+  group_by(newpuma, age_gp) %>% 
+  mutate(rate = rate - mean(rate)) %>% 
+  ggplot(aes(year, rate, group = newpuma, col = newpuma))+ 
+  geom_line(show.legend = FALSE)+ 
+  facet_wrap(~age_gp)+ 
+  theme_bw()
+
+
+reg_d$`36` %>% 
+  mutate(rate_resid = rate_resid) %>% 
+  group_by(newpuma, age_gp) %>% 
+  # mutate(rate = rate - mean(rate)) %>% 
+  ggplot(aes(year, rate_resid, group = newpuma, col = newpuma))+ 
+  geom_line(show.legend = FALSE)+ 
+  facet_wrap(~age_gp)+ 
+  theme_bw()
+
+reg_d$`36` %>% 
+  mutate(rate_resid = rate_resid) %>% 
+  group_by(newpuma, age_gp) %>% 
+  # mutate(rate = rate - mean(rate)) %>% 
+  ggplot(aes(age, rate_resid, group = newpuma, col = newpuma))+ 
+  geom_line(show.legend = FALSE)+ 
+  facet_wrap(~year)+ 
+  theme_bw()
+```
+
+
+# Models for New York for years 2013-2019
+
+Define $y_{a,r,t}$ to be the number of persons of age $a$ migrating in to region $r$ at year $t$. Define $P_{a,r,t}$ to be the population aged $a$ in region $r$ at year $t$. We assume migrant counts are Poisson distributed as follows: 
+$$y_{a,r,t} \sim \text{Poisson}(\mu_{a,r,t}P_{a,r,t})$$
+
+## Model 1.2
+
+We model the rates on the log scale with form: 
+$$\log \mu_{r,a,t} = \alpha+ \tau_{a} + \gamma_r + \delta_{r,a,t}.$$
+
+
+The full model is: 
+\begin{align*}
+y_{a,r,t}&\sim \text{Poisson}(\mu_{a,r,t}P_{a,r,t})\\
+\log \mu_{a,r,t} &= \alpha + \tau_a + \gamma_r  +  \delta_{a,r,t}\\
+\delta_{a,r,t}&= \delta^1_{a,r} + \delta^2_{r,t} + \delta^3_{a,r,t}\\
+\delta^1_{a,r} &\sim \mathcal{N}(\delta^1_{a-1,r},\sigma_{\delta^1_r}^2)\\
+\delta^2_{r,t} &\sim \mathcal{N}(\delta^2_{r,t-1},\sigma_{\delta^2_r}^2)\\
+\dleta^3_{a,r,t} & \sim \mathcal{N}(0,\sigma_3^2)\\
+&\sum_{r}\delta^1_{a,r} = 0\\
+&\sum \delta^3 = 0\\
+\tau_a &\sim \mathcal{N}(0,1)\\
+\gamma_r &\sim \mathcal{N}(0,1)\\
+\sigma_{\delta^1_r} &\sim \mathcal{N}^+(0,1)\\
+\sigma_{\delta^2_r} &\sim \mathcal{N}^+(0,1)\\
+\sigma_3 &\sim \mathcal{N}^+(0,1)
+\end{align*}
+
+```{r, echo = FALSE, warning = FALSE, message= FALSE}
+
+
+tmp <- reg_d$`36` %>% 
+  filter(year <=2019)
+
+tmp <- tmp %>% 
+  mutate(age_gp_num = as.numeric(as.factor(age_gp)), 
+         region = as.numeric(as.factor(newpuma)))
+
+# tmp <- tmp %>%
+# filter(region <= 6)
+
+ages <- unique(tmp$age) 
+I <- 10 # between-knot length -->
+res <- distortr::GetSplines(ages, I = I) # a function from distortr, to get splines of constant shape 
+B <- res$B.ik
+
+A = length(unique(tmp$age_gp))
+R = length(unique(tmp$newpuma))
+N = length(tmp$migrant)
+T = length(unique(tmp$year))
+age_unique = tmp$age_gp %>% unique()
+region_unique = tmp$newpuma %>% unique()
+pred_df = expand.grid(age_gp = age_unique, 
+                      newpuma = region_unique) %>% 
+  mutate(year = 2020)
+
+stan_data <- list(A = A,
+                  R = R,
+                  N = N,
+                  T = T,
+                  K= ncol(B),
+                  age = model.matrix(~tmp$age_gp)[,-1],
+                  region = model.matrix(~ as.factor(tmp$newpuma))[,-1],
+                  time = model.matrix(~ as.factor(tmp$year))[,-1],
+                  age_region = model.matrix(~tmp$age_gp*as.factor(tmp$newpuma))[,-c(1:(R+A-1))],
+                  pop = log(tmp$sim_pop),
+                  y = tmp$sim_dat,
+                  # pop = log(tmp$totalpop),
+                  # y = tmp$migrant,
+                  age_vec = tmp$age_gp %>% as.numeric(),
+                  region_vec = as.factor(tmp$newpuma) %>% as.numeric(),
+                  time_vec = as.factor(tmp$year) %>% as.numeric(),
+                  pred_age = model.matrix(~pred_df$age_gp)[,-1],
+                  pred_region = model.matrix(~ as.factor(pred_df$newpuma))[,-1],
+                  pred_age_region = model.matrix(~pred_df$age_gp*as.factor(pred_df$newpuma))[,-c(1:(R+A-1))],
+                  pred_age_vec = as.numeric(pred_df$age_gp),
+                  pred_region_vec = as.numeric(as.factor(pred_df$newpuma)),
+                  B=B)
+```
+
+```{r eval=FALSE, echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+# Random walk on the deviations + random intercepts
+
+
+modcs <- stan(data = stan_data,
+             file = "../Programs/models/final models/finalmodel_spline.stan",
+             iter=1000,
+             warmup = 250,
+             # iter = 300,
+             cores=4,
+             chains = 4,
+             control = list(adapt_delta = 0.95,max_treedepth = 15),
+             thin=3,
+             # thin = 1,
+             seed=1)
+model_sum <- summary(modcs)
+interaction = FALSE
+save(file="../Model results/finalmodel_spline_moreits.RData", list=c("modcs","model_sum", "interaction"))
+
+```
+
+
+
+```{r model-comparisons, echo = FALSE, warning = FALSE,cache=FALSE}
+load("../Model results/finalmodel_spline.RData")
+# Compare models 
+
+## Check convergence of RW model 
+d1 <- summary(modcs)$summary[,c("mean", "n_eff", "Rhat","sd","se_mean","2.5%","97.5%")]
+totrace1 <- rownames(d1 %>% as.data.frame() %>% arrange(desc(Rhat)))[1]
+rstan::traceplot(modcs, pars=totrace1,inc_warmup = TRUE)
+rstan::traceplot(modcs, pars = "sigma1", inc_warmup = FALSE)
+rstan::traceplot(modcs, pars = "sigma2", inc_warmup = FALSE)
+
+## Compare parameters
+# pars = c("alpha","tau","gamma","sigma1","sigma2")
+# print(modrw, pars = c(pars))
+# print(modrw_RI, pars = c(pars,"sigma3"))
+
+## Goodness of fit 
+yp1_p <-summary(modcs)$summary[,c("mean", "2.5%","97.5%")][grep("y_p",rownames(d1),fixed= TRUE),1]
+yp1_upper <-summary(modcs)$summary[,c("mean", "2.5%","97.5%")][grep("y_p",rownames(d1),fixed= TRUE),3]
+yp1_lower <- summary(modcs)$summary[,c("mean", "2.5%","97.5%")][grep("y_p",rownames(d1),fixed= TRUE),2]
+
+data.frame(y = stan_data$y, 
+           y_p = yp1_p, 
+           yp_upper = yp1_upper, 
+           yp_lower = yp1_lower) %>% 
+  mutate(ind2 = y<= yp_upper & yp_lower <= y) %>% 
+  summarise(mm = mean(ind2))
+
+```
+
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, cache=FALSE}
+load("../Model results/finalmodel_spline_moreits.RData")
+interaction = FALSE
+d <- model_sum$summary[,c("mean", "n_eff", "Rhat","sd","se_mean","2.5%","97.5%")]
+d %>% as.data.frame() %>% arrange(desc(Rhat)) %>% head(10)
+totrace <- rownames(d %>% as.data.frame() %>% arrange(desc(Rhat)))[1]
+rstan::traceplot(modcs, pars=totrace,inc_warmup = TRUE)
+
+#extract age-specific rates (tau)
+est_tau <- model_sum$summary[,c("mean", "sd", "n_eff", "Rhat")][grep("tau\\[[0-9]*\\]",rownames(d)),1]
+
+#extract region-specific rates (gamma)
+est_gamma <- model_sum$summary[,c("mean", "sd", "n_eff", "Rhat")][grep("gamma\\[[0-9]*\\]",rownames(d)),1]
+
+#extract intercept  (alpha)
+est_alpha <- model_sum$summary[,c("mean", "sd", "n_eff", "Rhat")][grep("alpha",rownames(d)),1]
+
+#extract log rates
+r1 <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("log_rate",rownames(d)),1]
+r1_upper <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("log_rate",rownames(d)),3]
+r1_lower <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("log_rate",rownames(d)),2]
+
+#extract predictions intervals 
+# p1 <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("rate_p",rownames(d)),1]
+# p1_upper <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("rate_p",rownames(d)),3]
+# p1_lower <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("rate_p",rownames(d)),2]
+# p1_se <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("rate_p",rownames(d)),2]
+
+# extract poisson_rng outcomes
+yp_upper <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("y_p",rownames(d)),3]
+yp_lower <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("y_p",rownames(d)),2]
+
+#extract fixed effects 
+f1 <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("fixed_eff",rownames(d)),1][1:nrow(tmp)]
+
+#extract RW on age + fixed effects 
+f2 <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("deviation_fixed_eff",rownames(d)),1][1:nrow(tmp)]
+
+
+#extract predictions intervals year 2020
+p2020 <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("pred_rate",rownames(d)),1]
+p2020_lower <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("pred_rate",rownames(d)),2]
+p2020_upper <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("pred_rate",rownames(d)),3]
+
+#generated
+p1.1 <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("generated_rate",rownames(d)),1]
+p1.1_upper <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("generated_rate",rownames(d)),3]
+p1.1_lower <- model_sum$summary[,c("mean", "2.5%","97.5%")][grep("generated_rate",rownames(d)),2]
+
+
+
+est_age_rates <- c(est_alpha + mean(est_gamma), est_tau + est_alpha + mean(est_gamma))
+est_age_rates <- exp(est_age_rates)
+
+mig_sched = pred_df %>% dplyr::select(age_gp, newpuma)
+mig_sched$fit = model.matrix(~age_gp + as.factor(newpuma), data = mig_sched) %*% (matrix(c(est_alpha, est_tau,est_gamma)))
+
+tmp_results <- tmp
+
+tmp_results$est_log_rates = r1
+tmp_results$est_log_rates_upper = r1_upper
+tmp_results$est_log_rates_lower = r1_lower
+tmp_results$fixed_eff = f1
+tmp_results$deviation_fixed_eff = f2
+tmp_results$gen_log_rates = p1.1
+tmp_results$gen_log_rates_lower = p1.1_lower
+tmp_results$gen_log_rates_upper = p1.1_upper
+
+
+pred_results <- pred_df %>% 
+  left_join(reg_d$`36` %>% dplyr::select(newpuma, age_gp, year, rate))
+
+pred_results$pred_log_rates = p2020
+pred_results$pred_log_rates_lower = p2020_lower
+pred_results$pred_log_rates_upper = p2020_upper
+
+
+tmp_results <- tmp_results %>% 
+  mutate(est_rates = exp(est_log_rates),
+         fixed_eff_rates = exp(fixed_eff),
+         deviation_fixed_eff = exp(deviation_fixed_eff),
+         fitted_rate_lower = exp(est_log_rates_lower),
+         fitted_rate_upper = exp(est_log_rates_upper)) %>%
+  mutate(log_rate_obs = log(rate))
+
+pred_results <- pred_results %>% 
+  mutate(est_rates = exp(pred_log_rates),
+         fitted_rate_upper = exp(pred_log_rates_upper),
+         fitted_rate_lower = exp(pred_log_rates_lower)
+         ) %>%
+  mutate(log_rate_obs = log(rate))
+
+tmp_results <- full_join(tmp_results, pred_results)
+
+```
+
+### Estimated standard age schedule
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+in_mig_plot <- mig_sched %>% 
+  group_by(age_gp) %>% 
+  ggplot(aes(age_gp, exp(fit), col = factor(newpuma), group = newpuma)) + 
+  geom_line(alpha=0.2, show.legend = FALSE)+ 
+  theme_bw() +
+  ggtitle("Migration Puma In-Migration Standard Age Schedule, New York") +
+  scale_y_continuous(name ="rate",
+                     breaks = scales::pretty_breaks(n=10))+
+  xlab("age")+ 
+  geom_line(data=data.frame(age = tmp$age_gp %>% unique(),
+           fit = est_age_rates,
+           newpuma = NA), aes(age, fit) ,inherit.aes = TRUE,col = "black")
+
+ggsave(filename = "../Paper/Plots/in_mig_plot_CS.pdf",
+       plot=in_mig_plot, 
+       device = "pdf",
+       dpi = 300,
+       height = 4, 
+       width = 7)
+```
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+data.frame(age = tmp$age %>% unique(),
+           fit = est_age_rates) %>% 
+ggplot(aes(age,fit))+ 
+  geom_line()+ 
+  theme_bw()
+```
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE}
+
+plots <- split(tmp_results, tmp_results$newpuma)
+
+lapply(plots, function(dd){
+dd %>% 
+  filter(year<2020) %>% 
+  ggplot(aes(age, rate))+
+  geom_point()+ 
+  facet_wrap(~year)+ 
+  geom_line(aes(age, fixed_eff_rates, col = "expected"))+
+  geom_line(aes(age, deviation_fixed_eff, col = "expected + delta(a,r)"))+
+  geom_line(aes(age, est_rates, col = "expected + delta(a,r) + delta(t,r)"))+
+  geom_ribbon(aes(ymin = gen_log_rates_lower, ymax = gen_log_rates_upper),
+              alpha = 0.5, show.legend = FALSE) +
+  theme_bw()
+})
+
+```
+
+
+
+### Estimated migration curve over time for New York PUMAS
+
+```{r, echo = FALSE, warning=FALSE, message=FALSE, fig.height=6.5, fig.width=7}
+
+plots <- split(tmp_results, tmp_results$newpuma)
+
+set.seed(2)
+plots <- plots[sample(1:length(plots),10)]
+# plots <- plots[1:6]
+
+lapply(plots, function(dd){
+  dd %>% 
+  ggplot(aes(year, rate))+
+  facet_wrap(~age_gp, ncol = 5)+
+  geom_line(aes(year, est_rates, col = "fitted", group= age_gp)) +
+  geom_ribbon(aes(ymin = fitted_rate_lower, ymax = fitted_rate_upper, col = "fitted", fill ="fitted", group = age_gp), alpha = 0.2, show.legend = FALSE)+ 
+  geom_point(aes(col = "data", group = age_gp))+
+  scale_color_manual(name = "", values = c("fitted" = "red", "data" = "black")) +
+  theme_bw()+ 
+  ggtitle(paste0("Region ", dd$newpuma[1])) 
+})
+
+
+```
+
+
