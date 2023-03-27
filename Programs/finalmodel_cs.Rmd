@@ -214,40 +214,6 @@ save(file="../Model results/finalmodel_spline_moreits.RData", list=c("modcs","mo
 ```
 
 
-
-```{r model-comparisons, echo = FALSE, warning = FALSE,cache=FALSE}
-load("../Model results/finalmodel_spline.RData")
-# Compare models 
-
-## Check convergence of RW model 
-d1 <- summary(modcs)$summary[,c("mean", "n_eff", "Rhat","sd","se_mean","2.5%","97.5%")]
-totrace1 <- rownames(d1 %>% as.data.frame() %>% arrange(desc(Rhat)))[1]
-rstan::traceplot(modcs, pars=totrace1,inc_warmup = TRUE)
-rstan::traceplot(modcs, pars = "sigma1", inc_warmup = FALSE)
-rstan::traceplot(modcs, pars = "sigma2", inc_warmup = FALSE)
-
-## Compare parameters
-# pars = c("alpha","tau","gamma","sigma1","sigma2")
-# print(modrw, pars = c(pars))
-# print(modrw_RI, pars = c(pars,"sigma3"))
-
-## Goodness of fit 
-yp1_p <-summary(modcs)$summary[,c("mean", "2.5%","97.5%")][grep("y_p",rownames(d1),fixed= TRUE),1]
-yp1_upper <-summary(modcs)$summary[,c("mean", "2.5%","97.5%")][grep("y_p",rownames(d1),fixed= TRUE),3]
-yp1_lower <- summary(modcs)$summary[,c("mean", "2.5%","97.5%")][grep("y_p",rownames(d1),fixed= TRUE),2]
-
-data.frame(y = stan_data$y, 
-           y_p = yp1_p, 
-           yp_upper = yp1_upper, 
-           yp_lower = yp1_lower) %>% 
-  mutate(ind2 = y<= yp_upper & yp_lower <= y) %>% 
-  summarise(mm = mean(ind2))
-
-```
-
-
-
-
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, cache=FALSE}
 load("../Model results/finalmodel_spline_moreits.RData")
 interaction = FALSE
@@ -359,13 +325,6 @@ in_mig_plot <- mig_sched %>%
   geom_line(data=data.frame(age = tmp$age_gp %>% unique(),
            fit = est_age_rates,
            newpuma = NA), aes(age, fit) ,inherit.aes = TRUE,col = "black")
-
-ggsave(filename = "../Paper/Plots/in_mig_plot_CS.pdf",
-       plot=in_mig_plot, 
-       device = "pdf",
-       dpi = 300,
-       height = 4, 
-       width = 7)
 ```
 
 ```{r, echo = FALSE, warning=FALSE, message=FALSE}
@@ -375,52 +334,4 @@ ggplot(aes(age,fit))+
   geom_line()+ 
   theme_bw()
 ```
-
-```{r, echo = FALSE, warning=FALSE, message=FALSE}
-
-plots <- split(tmp_results, tmp_results$newpuma)
-
-lapply(plots, function(dd){
-dd %>% 
-  filter(year<2020) %>% 
-  ggplot(aes(age, rate))+
-  geom_point()+ 
-  facet_wrap(~year)+ 
-  geom_line(aes(age, fixed_eff_rates, col = "expected"))+
-  geom_line(aes(age, deviation_fixed_eff, col = "expected + delta(a,r)"))+
-  geom_line(aes(age, est_rates, col = "expected + delta(a,r) + delta(t,r)"))+
-  geom_ribbon(aes(ymin = gen_log_rates_lower, ymax = gen_log_rates_upper),
-              alpha = 0.5, show.legend = FALSE) +
-  theme_bw()
-})
-
-```
-
-
-
-### Estimated migration curve over time for New York PUMAS
-
-```{r, echo = FALSE, warning=FALSE, message=FALSE, fig.height=6.5, fig.width=7}
-
-plots <- split(tmp_results, tmp_results$newpuma)
-
-set.seed(2)
-plots <- plots[sample(1:length(plots),10)]
-# plots <- plots[1:6]
-
-lapply(plots, function(dd){
-  dd %>% 
-  ggplot(aes(year, rate))+
-  facet_wrap(~age_gp, ncol = 5)+
-  geom_line(aes(year, est_rates, col = "fitted", group= age_gp)) +
-  geom_ribbon(aes(ymin = fitted_rate_lower, ymax = fitted_rate_upper, col = "fitted", fill ="fitted", group = age_gp), alpha = 0.2, show.legend = FALSE)+ 
-  geom_point(aes(col = "data", group = age_gp))+
-  scale_color_manual(name = "", values = c("fitted" = "red", "data" = "black")) +
-  theme_bw()+ 
-  ggtitle(paste0("Region ", dd$newpuma[1])) 
-})
-
-
-```
-
 
