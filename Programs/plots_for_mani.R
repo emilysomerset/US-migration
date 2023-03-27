@@ -223,7 +223,7 @@ ggsave(filename = "../Paper/Plots/in_mig_plot_RW.pdf",
 
 
 
-load("boundary_info.RData")
+# load("boundary_info.RData")
 
 plot_ts_pred <- function(df,puma){
   df %>% 
@@ -240,7 +240,7 @@ plot_ts_pred <- function(df,puma){
 
 #PUMA 2100
 obs_counties %>% filter(statefip==36 & newpuma == 2100) # Doesn't correspond to an exact county. 
-plot_fun(df= to_keep, newpuma = 2100)
+# plot_fun(df= to_keep, newpuma = 2100)
 # Corresponds to Greene county and columbia county. 
 gg = plot_ts_pred(df = summary_rw$fit, 2100)+ 
   ggtitle("In-Migration Rates, Greene and Columbia County, New York")
@@ -255,7 +255,7 @@ ggsave(filename = "../Paper/Plots/puma2100_tsfit.pdf",
 
 #PUMA 1300
 obs_counties %>% filter(statefip==36 & newpuma == 1300) # Doesn't correspond to an exact county. 
-plot_fun(df= to_keep, newpuma = 1300)
+# plot_fun(df= to_keep, newpuma = 1300)
 # Corresponds to Wyoming and Livingston county
 gg = plot_ts_pred(df = summary_rw$fit, 1300)+ 
   ggtitle("In-Migration Rates, Wyoming and Livingston County, New York")
@@ -271,7 +271,7 @@ ggsave(filename = "../Paper/Plots/puma1300_tsfit.pdf",
 
 #PUMA 1700
 obs_counties %>% filter(statefip==36 & newpuma == 1700) # Corresponds to exactly 1 county
-plot_fun(df= to_keep, newpuma = 1700)
+# plot_fun(df= to_keep, newpuma = 1700)
 # Corresponds to Schenectady
 # check:
 county_dic %>% filter(countyfip==93 & statefip==36)
@@ -336,7 +336,7 @@ year2020_results %>%
 
 # PUMA 300
 obs_counties %>% filter(statefip==36 & newpuma == 300) # Corresponds to more than one county
-plot_fun(df= to_keep, newpuma = 300)
+# plot_fun(df= to_keep, newpuma = 300)
 # Corresponds to Warren and Washington County 
 # check:
 # county_dic %>% filter(countyfip==93 & statefip==36)
